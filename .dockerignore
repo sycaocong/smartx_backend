@@ -1,0 +1,14 @@
+.git
+.gitignore
+README.md
+LICENSE
+*.md
+docs/
+tests/
+test/
+*_test.go
+Makefile
+docker-compose.yml
+Dockerfile
+.env
+.env.*

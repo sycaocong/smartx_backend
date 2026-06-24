@@ -1,0 +1,49 @@
+# SmartX Matching Engine Configuration
+
+# Server Configuration
+[server]
+host = "0.0.0.0"
+port = 8080
+
+[server.ws]
+read_buffer_size = 1024
+write_buffer_size = 1024
+max_message_size = 65536
+ping_interval = 30
+pong_timeout = 60
+
+# Kafka Configuration
+[kafka]
+brokers = ["localhost:9092"]
+
+[kafka.topic]
+orders = "exchange.orders"
+trades = "exchange.trades"
+ticker = "exchange.ticker"
+orderbook = "exchange.orderbook"
+
+[kafka.producer]
+acks = "all"
+retries = 3
+batch_size = 16384
+linger_ms = 5
+compression = "lz4"
+
+[kafka.consumer]
+group_id = "matching-engine"
+min_bytes = 1
+max_bytes = 10485760
+max_wait_ms = 500
+
+# Redis Configuration
+[redis]
+host = "localhost"
+port = 6379
+password = ""
+db = 0
+
+# Matching Engine Configuration
+[matching]
+shards = 8
+worker_pool_size = 16
+buffer_size = 10000

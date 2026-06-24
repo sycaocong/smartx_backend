@@ -1,0 +1,84 @@
+version: '3.8'
+
+services:
+  matching-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: smartx/matching-engine:latest
+    container_name: smartx-matching-engine
+    ports:
+      - "8080:8080"
+      - "9090:9090"
+    environment:
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8080
+      - MATCHING_SHARDS=8
+      - KAFKA_BROKERS=kafka:9092
+      - LOG_LEVEL=info
+    volumes:
+      - ./config.toml:/app/config.toml:ro
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      - kafka
+      - redis
+    networks:
+      - smartx-network
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
+        reservations:
+          cpus: '2'
+          memory: 2G
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: smartx-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+    depends_on:
+      - zookeeper
+    networks:
+      - smartx-network
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: smartx-zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - smartx-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: smartx-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    networks:
+      - smartx-network
+
+networks:
+  smartx-network:
+    driver: bridge
+
+volumes:
+  redis-data:
