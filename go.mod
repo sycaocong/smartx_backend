@@ -3,6 +3,7 @@ module github.com/smartx/matching-engine
 go 1.21
 
 require (
+	github.com/golang/protobuf v1.5.3
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.1
 	github.com/rs/zerolog v1.31.0
@@ -13,4 +14,5 @@ require (
 	github.com/mattn/go-isatty v0.0.19 // indirect
 	golang.org/x/net v0.19.0 // indirect
 	golang.org/x/sys v0.15.0 // indirect
+	google.golang.org/protobuf v1.26.0 // indirect
 )
