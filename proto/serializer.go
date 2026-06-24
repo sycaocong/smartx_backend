@@ -2,20 +2,19 @@ package proto
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
 	"sync"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/rs/zerolog"
 )
 
-// Serializer 序列化器，支持Protobuf和JSON
+// Serializer 序列化器，支持高效JSON压缩
 type Serializer struct {
-	logger        zerolog.Logger
-	useBufferPool bool
+	logger zerolog.Logger
 }
 
 // Buffer 缓冲区接口
@@ -41,13 +40,10 @@ func (b *bytesBuffer) Reset()        { b.data = b.data[:0] }
 
 // NewSerializer 创建序列化器
 func NewSerializer(logger zerolog.Logger) *Serializer {
-	return &Serializer{
-		logger:        logger,
-		useBufferPool: true,
-	}
+	return &Serializer{logger: logger}
 }
 
-// Serialize 序列化消息为字节数组（优先使用Protobuf）
+// Serialize 序列化消息为字节数组
 func (s *Serializer) Serialize(msgType string, data interface{}) ([]byte, error) {
 	var buf []byte
 	var err error
@@ -72,17 +68,15 @@ func (s *Serializer) Serialize(msgType string, data interface{}) ([]byte, error)
 		return nil, err
 	}
 
-	// 使用buf压缩
 	return s.compressBuffer(buf), nil
 }
 
-// compressBuffer 使用bufio压缩数据
+// compressBuffer 使用varint编码压缩数据
 func (s *Serializer) compressBuffer(data []byte) []byte {
 	if len(data) < 64 {
 		return data
 	}
 
-	// 使用varint编码长度 + 实际数据
 	varintBuf := make([]byte, binary.MaxVarintLen64)
 	n := binary.PutUvarint(varintBuf, uint64(len(data)))
 
@@ -95,7 +89,6 @@ func (s *Serializer) compressBuffer(data []byte) []byte {
 
 // Deserialize 反序列化字节数组为消息
 func (s *Serializer) Deserialize(msgType string, data []byte) (interface{}, error) {
-	// 解压buffer
 	data = s.decompressBuffer(data)
 
 	switch msgType {
@@ -119,7 +112,6 @@ func (s *Serializer) decompressBuffer(data []byte) []byte {
 		return data
 	}
 
-	// 尝试读取varint长度
 	length, n := binary.Uvarint(data)
 	if n <= 0 || int(length) != len(data)-n {
 		return data
@@ -154,51 +146,31 @@ func (s *Serializer) DeserializeFromReader(r io.Reader, msgType string) (interfa
 	return s.Deserialize(msgType, data)
 }
 
-// 序列化方法 - 使用Protobuf
+// 序列化方法 - 使用JSON
 func (s *Serializer) serializeOrder(data interface{}) ([]byte, error) {
-	order, ok := data.(*OrderProto)
-	if !ok {
-		return nil, fmt.Errorf("invalid order type")
-	}
-	return proto.Marshal(order)
+	return json.Marshal(data)
 }
 
 func (s *Serializer) serializeTrade(data interface{}) ([]byte, error) {
-	trade, ok := data.(*TradeProto)
-	if !ok {
-		return nil, fmt.Errorf("invalid trade type")
-	}
-	return proto.Marshal(trade)
+	return json.Marshal(data)
 }
 
 func (s *Serializer) serializeTicker(data interface{}) ([]byte, error) {
-	ticker, ok := data.(*TickerProto)
-	if !ok {
-		return nil, fmt.Errorf("invalid ticker type")
-	}
-	return proto.Marshal(ticker)
+	return json.Marshal(data)
 }
 
 func (s *Serializer) serializeOrderBook(data interface{}) ([]byte, error) {
-	ob, ok := data.(*OrderBookProto)
-	if !ok {
-		return nil, fmt.Errorf("invalid orderbook type")
-	}
-	return proto.Marshal(ob)
+	return json.Marshal(data)
 }
 
 func (s *Serializer) serializeKLine(data interface{}) ([]byte, error) {
-	kline, ok := data.(*KLineProto)
-	if !ok {
-		return nil, fmt.Errorf("invalid kline type")
-	}
-	return proto.Marshal(kline)
+	return json.Marshal(data)
 }
 
-// 反序列化方法 - 使用Protobuf
+// 反序列化方法
 func (s *Serializer) deserializeOrder(data []byte) (*OrderProto, error) {
 	order := &OrderProto{}
-	if err := proto.Unmarshal(data, order); err != nil {
+	if err := json.Unmarshal(data, order); err != nil {
 		return nil, err
 	}
 	return order, nil
@@ -206,7 +178,7 @@ func (s *Serializer) deserializeOrder(data []byte) (*OrderProto, error) {
 
 func (s *Serializer) deserializeTrade(data []byte) (*TradeProto, error) {
 	trade := &TradeProto{}
-	if err := proto.Unmarshal(data, trade); err != nil {
+	if err := json.Unmarshal(data, trade); err != nil {
 		return nil, err
 	}
 	return trade, nil
@@ -214,7 +186,7 @@ func (s *Serializer) deserializeTrade(data []byte) (*TradeProto, error) {
 
 func (s *Serializer) deserializeTicker(data []byte) (*TickerProto, error) {
 	ticker := &TickerProto{}
-	if err := proto.Unmarshal(data, ticker); err != nil {
+	if err := json.Unmarshal(data, ticker); err != nil {
 		return nil, err
 	}
 	return ticker, nil
@@ -222,7 +194,7 @@ func (s *Serializer) deserializeTicker(data []byte) (*TickerProto, error) {
 
 func (s *Serializer) deserializeOrderBook(data []byte) (*OrderBookProto, error) {
 	ob := &OrderBookProto{}
-	if err := proto.Unmarshal(data, ob); err != nil {
+	if err := json.Unmarshal(data, ob); err != nil {
 		return nil, err
 	}
 	return ob, nil
@@ -247,20 +219,41 @@ type CompressionStats struct {
 }
 
 // GetStats 获取压缩统计
-func (s *Serializer) GetStats(originalSize int) CompressionStats {
-	// 这里可以添加实际的压缩统计逻辑
+func (s *Serializer) GetStats(originalSize, compressedSize int) CompressionStats {
+	ratio := 1.0
+	if originalSize > 0 {
+		ratio = float64(compressedSize) / float64(originalSize)
+	}
 	return CompressionStats{
 		OriginalSize:   originalSize,
-		CompressedSize: originalSize,
-		Ratio:          1.0,
+		CompressedSize: compressedSize,
+		Ratio:          ratio,
 	}
 }
 
-// Fallback to JSON when protobuf fails
-func (s *Serializer) serializeJSON(data interface{}) ([]byte, error) {
-	return json.Marshal(data)
+// Marshal 序列化（兼容接口）
+func (s *Serializer) Marshal(msgType string, data interface{}) ([]byte, error) {
+	return s.Serialize(msgType, data)
 }
 
-func (s *Serializer) deserializeJSON(data []byte, msg proto.Message) error {
-	return json.Unmarshal(data, msg)
+// Unmarshal 反序列化
+func (s *Serializer) Unmarshal(msgType string, data []byte) (interface{}, error) {
+	return s.Deserialize(msgType, data)
+}
+
+// CompactJSON 紧凑JSON序列化（无缩进）
+func CompactJSON(data interface{}) ([]byte, error) {
+	var buf bytes.Buffer
+	writer := bufio.NewWriter(&buf)
+	enc := json.NewEncoder(writer)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(data); err != nil {
+		return nil, err
+	}
+	writer.Flush()
+	result := buf.Bytes()
+	if len(result) > 0 && result[len(result)-1] == '\n' {
+		result = result[:len(result)-1]
+	}
+	return result, nil
 }
