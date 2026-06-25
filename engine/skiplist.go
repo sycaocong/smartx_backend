@@ -137,6 +137,14 @@ func (s *SkipList) Insert(key float64, score int64, value interface{}) *SkipList
 	// 生成随机层数
 	level := s.randomLevel()
 
+	// 如果新节点的层数大于当前层数，初始化高层级的update
+	if level > s.Level {
+		for i := s.Level; i < level; i++ {
+			update[i] = s.Header
+		}
+		s.Level = level
+	}
+
 	// 创建新节点
 	node := &SkipListNode{
 		Key:     key,
@@ -148,13 +156,12 @@ func (s *SkipList) Insert(key float64, score int64, value interface{}) *SkipList
 
 	// 插入节点
 	for i := 0; i < level; i++ {
-		node.Forward[i] = update[i].Forward[i]
-		update[i].Forward[i] = node
-	}
-
-	// 更新层数
-	if level > s.Level {
-		s.Level = level
+		if update[i] != nil {
+			if update[i].Forward[i] != nil {
+				node.Forward[i] = update[i].Forward[i]
+			}
+			update[i].Forward[i] = node
+		}
 	}
 
 	s.Size++

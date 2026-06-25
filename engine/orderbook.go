@@ -5,10 +5,11 @@ import (
 	"sync"
 )
 
-// PriceLevel 价格档位
+// PriceLevel 价格档位（按价格聚合的订单列表）
 type PriceLevel struct {
 	Price    float64
 	Quantity float64
+	Orders   []*Order
 }
 
 // OrderBook 订单簿
@@ -49,9 +50,23 @@ func (ob *OrderBook) AddOrder(order *Order) {
 		ob.TotalAskQuantity += order.Quantity
 	}
 
-	// 添加到跳表
-	node := &OrderNode{Order: order}
-	skiplist.Insert(order.Price, order.Priority, node)
+	// 使用价格作为key（同价格只存一个节点），Priority固定为0
+	existingNode := skiplist.Search(order.Price, 0)
+	if existingNode != nil {
+		// 更新现有价格档位
+		if priceLevel, ok := existingNode.Value.(*PriceLevel); ok {
+			priceLevel.Quantity += order.Quantity
+			priceLevel.Orders = append(priceLevel.Orders, order)
+		}
+	} else {
+		// 创建新的价格档位
+		priceLevel := &PriceLevel{
+			Price:    order.Price,
+			Quantity: order.Quantity,
+			Orders:   []*Order{order},
+		}
+		skiplist.Insert(order.Price, 0, priceLevel)
+	}
 }
 
 // RemoveOrder 移除订单
@@ -69,8 +84,27 @@ func (ob *OrderBook) RemoveOrder(order *Order) bool {
 		ob.TotalAskQuantity -= remainingQty
 	}
 
-	// 从跳表中移除
-	return skiplist.Delete(order.Price, order.Priority)
+	// 检查并更新价格档位
+	existingNode := skiplist.Search(order.Price, 0)
+	if existingNode != nil {
+		if priceLevel, ok := existingNode.Value.(*PriceLevel); ok {
+			priceLevel.Quantity -= remainingQty
+			// 从订单列表中移除
+			for i, o := range priceLevel.Orders {
+				if o.OrderID == order.OrderID {
+					priceLevel.Orders = append(priceLevel.Orders[:i], priceLevel.Orders[i+1:]...)
+					break
+				}
+			}
+			if priceLevel.Quantity <= 0 || len(priceLevel.Orders) == 0 {
+				// 删除空的价格档位
+				return skiplist.Delete(order.Price, 0)
+			}
+			return true
+		}
+	}
+
+	return false
 }
 
 // Match 撮合
@@ -82,17 +116,17 @@ func (ob *OrderBook) Match(incomingOrder *Order) []*Trade {
 
 	if incomingOrder.Side == Buy {
 		// 买单匹配卖单
-		trades = ob.matchOrders(incomingOrder, ob.Asks, Buy)
+		trades = ob.matchOrders(incomingOrder, ob.Asks)
 	} else {
 		// 卖单匹配买单
-		trades = ob.matchOrders(incomingOrder, ob.Bids, Sell)
+		trades = ob.matchOrders(incomingOrder, ob.Bids)
 	}
 
 	return trades
 }
 
 // matchOrders 执行订单匹配
-func (ob *OrderBook) matchOrders(incoming *Order, book *SkipList, oppositeSide OrderSide) []*Trade {
+func (ob *OrderBook) matchOrders(incoming *Order, book *SkipList) []*Trade {
 	var trades []*Trade
 
 	// 确定价格条件：买单需要 incoming.Price >= book.Price，卖单需要 incoming.Price <= book.Price
@@ -104,56 +138,76 @@ func (ob *OrderBook) matchOrders(incoming *Order, book *SkipList, oppositeSide O
 
 		bestPrice := bestNode.Key
 
-		// 检查价格是否匹配
-		var priceMatch bool
-		if incoming.Side == Buy {
-			priceMatch = incoming.Price >= bestPrice
-		} else {
-			priceMatch = incoming.Price <= bestPrice
+		// 检查价格是否匹配（市价单跳过价格检查）
+		if incoming.Type != MarketOrder {
+			var priceMatch bool
+			if incoming.Side == Buy {
+				priceMatch = incoming.Price >= bestPrice
+			} else {
+				priceMatch = incoming.Price <= bestPrice
+			}
+
+			if !priceMatch {
+				break
+			}
 		}
 
-		if !priceMatch {
-			break
+		// 获取价格档位
+		priceLevel := bestNode.Value.(*PriceLevel)
+		
+		// 遍历该价格档位的所有订单进行撮合
+		for i := 0; i < len(priceLevel.Orders); i++ {
+			counterOrder := priceLevel.Orders[i]
+			
+			// 跳过已完成的订单
+			if counterOrder.IsDone() {
+				continue
+			}
+
+			// 计算成交数量
+			remainingIncoming := incoming.RemainingQuantity()
+			remainingCounter := counterOrder.RemainingQuantity()
+			matchQuantity := math.Min(remainingIncoming, remainingCounter)
+
+			// 使用对手方价格成交（LIMIT订单按盘口价成交）
+			tradePrice := counterOrder.Price
+
+			// 成交
+			incoming.Fill(matchQuantity, tradePrice)
+			counterOrder.Fill(matchQuantity, tradePrice)
+
+			// 更新统计
+			if incoming.Side == Buy {
+				ob.TotalAskQuantity -= matchQuantity
+			} else {
+				ob.TotalBidQuantity -= matchQuantity
+			}
+			ob.LastPrice = tradePrice
+			ob.LastTradeTime = incoming.Timestamp
+			ob.TradeCount++
+
+			// 创建成交记录
+			trade := NewTrade(incoming, counterOrder, tradePrice, matchQuantity, 0, "")
+			trades = append(trades, trade)
+
+			// 更新价格档位数量
+			priceLevel.Quantity -= matchQuantity
+
+			// 如果输入订单完成，退出循环
+			if incoming.IsDone() {
+				break
+			}
 		}
 
-		// 获取对手订单
-		orderNode := bestNode.Value.(*OrderNode)
-		counterOrder := orderNode.Order
-
-		// 跳过已完成的订单
-		if counterOrder.IsDone() {
-			book.Delete(bestPrice, bestNode.Score)
-			continue
+		// 如果价格档位的所有订单都完成，删除该价格档位
+		allDone := true
+		for _, o := range priceLevel.Orders {
+			if !o.IsDone() {
+				allDone = false
+				break
+			}
 		}
-
-		// 计算成交数量
-		remainingIncoming := incoming.RemainingQuantity()
-		remainingCounter := counterOrder.RemainingQuantity()
-		matchQuantity := math.Min(remainingIncoming, remainingCounter)
-
-		// 使用对手方价格成交（LIMIT订单按盘口价成交）
-		tradePrice := counterOrder.Price
-
-		// 成交
-		incoming.Fill(matchQuantity, tradePrice)
-		counterOrder.Fill(matchQuantity, tradePrice)
-
-		// 更新统计
-		if incoming.Side == Buy {
-			ob.TotalAskQuantity -= matchQuantity
-		} else {
-			ob.TotalBidQuantity -= matchQuantity
-		}
-		ob.LastPrice = tradePrice
-		ob.LastTradeTime = incoming.Timestamp
-		ob.TradeCount++
-
-		// 创建成交记录
-		trade := NewTrade(incoming, counterOrder, tradePrice, matchQuantity, 0, "")
-		trades = append(trades, trade)
-
-		// 如果对手订单完成，从订单簿移除
-		if counterOrder.IsDone() {
+		if allDone || priceLevel.Quantity <= 0 {
 			book.Delete(bestPrice, bestNode.Score)
 		}
 
