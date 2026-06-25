@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -344,10 +345,43 @@ func (c *Client) handleMessage(message []byte) {
 		Topics []string `json:"topics"`
 		Topic  string   `json:"topic"`
 		Symbol string   `json:"symbol"`
+		Method string   `json:"method"`
+		Params []string `json:"params"`
+		ID     int      `json:"id"`
 	}
 
 	if err := json.Unmarshal(message, &req); err != nil {
 		c.hub.logger.Warn().Err(err).Msg("Invalid message format")
+		return
+	}
+
+	// 兼容前端Binance格式订阅消息
+	if req.Method == "SUBSCRIBE" && len(req.Params) > 0 {
+		for _, param := range req.Params {
+			// 解析 "BTCUSDT@trade" 格式
+			parts := strings.Split(param, "@")
+			if len(parts) >= 2 {
+				symbol := parts[0]
+				topic := parts[1]
+				fullTopic := topic + "_" + symbol
+				c.mu.Lock()
+				c.groups[fullTopic] = true
+				c.mu.Unlock()
+			}
+		}
+
+		// 发送确认
+		response := map[string]interface{}{
+			"type":    "subscribed",
+			"params":  req.Params,
+			"success": true,
+			"id":      req.ID,
+		}
+		data, _ := json.Marshal(response)
+		select {
+		case c.send <- data:
+		default:
+		}
 		return
 	}
 

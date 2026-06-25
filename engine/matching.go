@@ -194,6 +194,11 @@ func (e *MatchingEngine) GetDepth(levels int) (bids, asks []PricePoint) {
 	return e.orderBook.GetDepth(levels)
 }
 
+// GetBestBidAsk 获取最优买卖价
+func (e *MatchingEngine) GetBestBidAsk() (bestBid, bestAsk, bidQty, askQty float64) {
+	return e.orderBook.GetBestBidAsk()
+}
+
 // calculateTotalQuantity 计算总成交量
 func (e *MatchingEngine) calculateTotalQuantity(trades []*Trade) float64 {
 	var total float64

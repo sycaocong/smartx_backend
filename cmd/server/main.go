@@ -71,6 +71,9 @@ func main() {
 		broadcaster.Start()
 	}
 
+	// 启动实时行情广播（从撮合引擎获取订单簿数据）
+	go startRealtimeBroadcast(shardRouter, wsHub)
+
 	// 创建API处理器
 	handler := api.NewHandler(shardRouter, wsHub, log.Logger)
 
@@ -141,6 +144,75 @@ func initLogger() {
 		Timestamp().
 		Caller().
 		Logger()
+}
+
+// startRealtimeBroadcast 启动实时行情广播
+func startRealtimeBroadcast(router *engine.ShardAwareRouter, hub *ws.Hub) {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		for _, symbol := range SYMBOLS {
+			eng := router.GetEngine(symbol)
+			if eng == nil {
+				continue
+			}
+
+			// 获取订单簿深度
+			bids, asks := eng.GetDepth(20)
+
+			// 广播订单簿
+			if len(bids) > 0 || len(asks) > 0 {
+				hub.PublishOrderBook(symbol, map[string]interface{}{
+					"symbol": symbol,
+					"bids":   bids,
+					"asks":   asks,
+					"time":   time.Now().UnixMilli(),
+				})
+			}
+
+			// 获取成交记录
+			trades := eng.GetTrades()
+			for _, trade := range trades {
+				hub.PublishTrade(symbol, map[string]interface{}{
+					"e":      "trade",
+					"E":      time.Now().UnixMilli(),
+					"s":      symbol,
+					"t":      trade.TradeID,
+					"p":      trade.Price,
+					"q":      trade.Quantity,
+					"T":      trade.Timestamp,
+					"m":      trade.Side == engine.Sell,
+				})
+			}
+
+			// 广播Ticker
+			bestBid, bestAsk, bidQty, askQty := eng.GetBestBidAsk()
+			hub.PublishTicker(symbol, map[string]interface{}{
+				"e":      "24hrTicker",
+				"E":      time.Now().UnixMilli(),
+				"s":      symbol,
+				"c":      bestAsk,
+				"b":      bestBid,
+				"a":      bestAsk,
+				"B":      bidQty,
+				"A":      askQty,
+				"v":      0,
+				"q":      0,
+				"h":      bestAsk,
+				"l":      bestBid,
+				"P":      0,
+				"p":      0,
+				"w":      0,
+				"x":      bestBid,
+				"C":      0,
+				"Q":      0,
+				"F":      0,
+				"L":      0,
+				"n":      0,
+			})
+		}
+	}
 }
 
 // startMetricsServer 启动性能监控服务器
