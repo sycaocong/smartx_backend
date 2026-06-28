@@ -2,10 +2,12 @@
 
 ## 1. 概述
 
+- **项目名称**: SmartX 企业级高性能交易所撮合引擎
 - **基础URL**: `http://localhost:8080`
 - **WebSocket**: `ws://localhost:8080/ws`
 - **数据格式**: JSON
 - **字符编码**: UTF-8
+- **开发语言**: Go 1.21+
 
 ---
 
@@ -17,6 +19,8 @@
 
 检查服务健康状态。
 
+**请求参数**: 无
+
 **响应示例**:
 ```json
 {
@@ -24,9 +28,30 @@
 }
 ```
 
+**代码位置**: [handler.go#L129](api/handler.go#L129)
+
 ---
 
-### 2.2 获取行情 ticker
+### 2.2 就绪检查
+
+**GET** `/ready`
+
+检查服务就绪状态。
+
+**请求参数**: 无
+
+**响应示例**:
+```json
+{
+    "status": "ready"
+}
+```
+
+**代码位置**: [handler.go#L134](api/handler.go#L134)
+
+---
+
+### 2.3 获取行情 Ticker
 
 **GET** `/api/v1/market/ticker/{symbol}`
 
@@ -41,20 +66,43 @@
 ```json
 {
     "symbol": "BTCUSDT",
-    "lastPrice": "94250.50",
-    "priceChange": "1250.30",
-    "priceChangePercent": "1.34",
-    "high24h": "95500.00",
-    "low24h": "92800.00",
-    "volume24h": "12345.67",
-    "quoteVolume24h": "1167890123.45",
+    "last_price": 94250.50,
+    "bid_price": 94250.00,
+    "ask_price": 94251.00,
+    "bid_qty": 1.2345,
+    "ask_qty": 0.9876,
+    "volume_24h": 12345.67,
+    "quote_volume_24h": 1167890123.45,
+    "high_24h": 95500.00,
+    "low_24h": 92800.00,
+    "price_change": 1250.30,
+    "price_change_pct": 1.34,
     "timestamp": 1750828800000
 }
 ```
 
+**响应字段**:
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| symbol | string | 交易对 |
+| last_price | float64 | 最新成交价 |
+| bid_price | float64 | 买一价 |
+| ask_price | float64 | 卖一价 |
+| bid_qty | float64 | 买一量 |
+| ask_qty | float64 | 卖一量 |
+| volume_24h | float64 | 24小时成交量 |
+| quote_volume_24h | float64 | 24小时成交额 |
+| high_24h | float64 | 24小时最高价 |
+| low_24h | float64 | 24小时最低价 |
+| price_change | float64 | 24小时价格变动 |
+| price_change_pct | float64 | 24小时涨跌幅(%) |
+| timestamp | int64 | 时间戳(毫秒) |
+
+**代码位置**: [handler.go#L256](api/handler.go#L256)
+
 ---
 
-### 2.3 获取订单簿深度
+### 2.4 获取订单簿深度
 
 **GET** `/api/v1/market/orderbook/{symbol}`
 
@@ -68,38 +116,142 @@
 **查询参数**:
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |------|------|------|--------|------|
-| limit | int | 否 | 100 | 深度档位数量 |
+| limit | int | 否 | 20 | 深度档位数量 |
+
+**响应示例**:
+```json
+{
+    "symbol": "BTCUSDT",
+    "version": 1750828800001,
+    "timestamp": 1750828800000,
+    "bids": [
+        [94250.50, 1.2345],
+        [94249.00, 2.3456],
+        [94248.50, 0.5678]
+    ],
+    "asks": [
+        [94251.00, 0.9876],
+        [94252.50, 1.5432],
+        [94253.00, 2.1111]
+    ]
+}
+```
+
+**响应字段**:
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| symbol | string | 交易对 |
+| version | int64 | 版本号(纳秒时间戳) |
+| timestamp | int64 | 时间戳(毫秒) |
+| bids | array | 买单列表，每项为 [价格, 数量] |
+| asks | array | 卖单列表，每项为 [价格, 数量] |
+
+**代码位置**: [handler.go#L283](api/handler.go#L283)
+
+---
+
+### 2.5 获取深度
+
+**GET** `/api/v1/market/depth/{symbol}`
+
+获取指定交易对的深度数据（原始格式）。
+
+**路径参数**:
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| symbol | string | 是 | 交易对，如 BTCUSDT |
+
+**查询参数**:
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| limit | int | 否 | 20 | 深度档位数量 |
 
 **响应示例**:
 ```json
 {
     "symbol": "BTCUSDT",
     "bids": [
-        ["94250.50", "1.2345"],
-        ["94249.00", "2.3456"],
-        ["94248.50", "0.5678"]
+        {"price": 94250.50, "quantity": 1.2345},
+        {"price": 94249.00, "quantity": 2.3456}
     ],
     "asks": [
-        ["94251.00", "0.9876"],
-        ["94252.50", "1.5432"],
-        ["94253.00", "2.1111"]
-    ],
-    "lastUpdateId": 1750828800001
+        {"price": 94251.00, "quantity": 0.9876},
+        {"price": 94252.50, "quantity": 1.5432}
+    ]
 }
 ```
 
+**代码位置**: [handler.go#L355](api/handler.go#L355)
+
 ---
 
-### 2.4 下单
+### 2.6 获取成交历史
 
-**POST** `/api/v1/order`
+**GET** `/api/v1/market/trades/{symbol}`
+
+获取指定交易对的成交历史。
+
+**路径参数**:
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| symbol | string | 是 | 交易对，如 BTCUSDT |
+
+**响应示例**:
+```json
+{
+    "trades": [],
+    "symbol": "BTCUSDT"
+}
+```
+
+> **注意**: 当前为占位实现，返回空数组。
+
+**代码位置**: [handler.go#L319](api/handler.go#L319)
+
+---
+
+### 2.7 获取K线数据
+
+**GET** `/api/v1/market/kline/{symbol}`
+
+获取指定交易对的K线数据。
+
+**路径参数**:
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| symbol | string | 是 | 交易对，如 BTCUSDT |
+
+**查询参数**:
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| interval | string | 否 | 1m | K线周期(1m, 5m, 1h, 1d) |
+| limit | int | 否 | 100 | 返回数量 |
+
+**响应示例**:
+```json
+{
+    "symbol": "BTCUSDT",
+    "interval": "1m",
+    "klines": [],
+    "limit": 100
+}
+```
+
+> **注意**: 当前为占位实现，返回空数组。
+
+**代码位置**: [handler.go#L330](api/handler.go#L330)
+
+---
+
+### 2.8 创建订单
+
+**POST** `/api/v1/orders`
 
 创建新订单。
 
 **请求头**:
 ```
 Content-Type: application/json
-X-User-ID: user123 (可选)
 ```
 
 **请求体**:
@@ -108,62 +260,61 @@ X-User-ID: user123 (可选)
     "symbol": "BTCUSDT",
     "side": "BUY",
     "type": "LIMIT",
-    "price": "94250.50",
-    "quantity": "0.1234"
+    "price": 94250.50,
+    "quantity": 0.1234,
+    "client_order_id": "my-order-123"
 }
 ```
 
+**请求字段**:
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | symbol | string | 是 | 交易对 |
 | side | string | 是 | BUY 或 SELL |
 | type | string | 是 | LIMIT 或 MARKET |
-| price | string | 否* | 订单价格 (*市价单可省略) |
-| quantity | string | 是 | 订单数量 |
+| price | float64 | 否* | 订单价格（市价单可省略） |
+| quantity | float64 | 是 | 订单数量（必须 > 0） |
+| client_order_id | string | 否 | 客户端订单ID |
 
 **响应示例**:
 ```json
 {
-    "orderId": "ord-550e8400-e29b-41d4-a716-446655440000",
+    "order_id": "a0a4a2e4-e598-4f36-88cf-43af22304f45",
     "symbol": "BTCUSDT",
-    "side": "BUY",
-    "type": "LIMIT",
-    "price": "94250.50",
-    "quantity": "0.1234",
-    "filledQty": "0.0000",
-    "status": "OPEN",
-    "createTime": 1750828800000,
-    "updateTime": 1750828800000
+    "side": 0,
+    "type": 0,
+    "price": 94250.50,
+    "quantity": 0.1234,
+    "filled_quantity": 0,
+    "avg_fill_price": 0,
+    "status": 0,
+    "timestamp": 1750828800000,
+    "client_order_id": "my-order-123"
 }
 ```
 
----
+**响应字段**:
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| order_id | string | 订单ID |
+| symbol | string | 交易对 |
+| side | int | 方向(0=BUY, 1=SELL) |
+| type | int | 类型(0=LIMIT, 1=MARKET) |
+| price | float64 | 订单价格 |
+| quantity | float64 | 订单数量 |
+| filled_quantity | float64 | 已成交数量 |
+| avg_fill_price | float64 | 平均成交价 |
+| status | int | 状态(0=NEW, 1=PARTIALLY_FILLED, 2=FILLED, 3=CANCELED, 4=REJECTED) |
+| timestamp | int64 | 创建时间戳 |
+| client_order_id | string | 客户端订单ID |
 
-### 2.5 取消订单
-
-**DELETE** `/api/v1/order/{orderId}`
-
-取消指定订单。
-
-**路径参数**:
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| orderId | string | 是 | 订单ID |
-
-**响应示例**:
-```json
-{
-    "orderId": "ord-550e8400-e29b-41d4-a716-446655440000",
-    "status": "CANCELED",
-    "canceledQty": "0.1234"
-}
-```
+**代码位置**: [handler.go#L174](api/handler.go#L174)
 
 ---
 
-### 2.6 查询订单
+### 2.9 查询订单
 
-**GET** `/api/v1/order/{orderId}`
+**GET** `/api/v1/orders/{orderId}`
 
 查询指定订单详情。
 
@@ -175,49 +326,111 @@ X-User-ID: user123 (可选)
 **响应示例**:
 ```json
 {
-    "orderId": "ord-550e8400-e29b-41d4-a716-446655440000",
-    "symbol": "BTCUSDT",
-    "side": "BUY",
-    "type": "LIMIT",
-    "price": "94250.50",
-    "quantity": "0.1234",
-    "filledQty": "0.0500",
-    "status": "PARTIALLY_FILLED",
-    "createTime": 1750828800000,
-    "updateTime": 1750828800500
+    "order_id": "a0a4a2e4-e598-4f36-88cf-43af22304f45",
+    "status": "not_implemented"
 }
 ```
+
+> **注意**: 当前为占位实现，未查询真实订单数据。
+
+**代码位置**: [handler.go#L221](api/handler.go#L221)
 
 ---
 
-### 2.7 错误响应
+### 2.10 取消订单
 
-错误响应格式：
+**DELETE** `/api/v1/orders/{orderId}`
 
+取消指定订单。
+
+**路径参数**:
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| orderId | string | 是 | 订单ID |
+
+**响应示例**:
 ```json
 {
-    "error": {
-        "code": "INVALID_ORDER",
-        "message": "订单价格不能为负数",
-        "details": {
-            "field": "price",
-            "value": "-100"
-        }
-    }
+    "order_id": "a0a4a2e4-e598-4f36-88cf-43af22304f45",
+    "status": "canceled"
 }
 ```
 
-**错误码列表**:
+> **注意**: 当前为占位实现，未执行真实取消操作。
 
-| 错误码 | HTTP状态码 | 说明 |
-|--------|-----------|------|
-| INVALID_REQUEST | 400 | 请求参数无效 |
-| INVALID_ORDER | 400 | 订单参数无效 |
-| ORDER_NOT_FOUND | 404 | 订单不存在 |
-| INSUFFICIENT_BALANCE | 400 | 余额不足 |
-| MARKET_CLOSED | 400 | 市场已关闭 |
-| RATE_LIMITED | 429 | 请求过于频繁 |
-| INTERNAL_ERROR | 500 | 服务器内部错误 |
+**代码位置**: [handler.go#L230](api/handler.go#L230)
+
+---
+
+### 2.11 获取订单列表
+
+**GET** `/api/v1/orders`
+
+获取订单列表。
+
+**查询参数**:
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| symbol | string | 否 | - | 交易对过滤 |
+| limit | string | 否 | 100 | 返回数量 |
+
+**响应示例**:
+```json
+{
+    "orders": [],
+    "limit": "100",
+    "symbol": "BTCUSDT"
+}
+```
+
+> **注意**: 当前为占位实现，返回空数组。
+
+**代码位置**: [handler.go#L239](api/handler.go#L239)
+
+---
+
+### 2.12 获取统计信息
+
+**GET** `/api/v1/stats`
+
+获取系统统计信息。
+
+**响应示例**:
+```json
+{
+    "ws_clients": 15,
+    "ws_messages": 123456,
+    "timestamp": 1750828800000
+}
+```
+
+**响应字段**:
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| ws_clients | int64 | WebSocket客户端数量 |
+| ws_messages | int64 | 已发送消息总数 |
+| timestamp | int64 | 时间戳(毫秒) |
+
+**代码位置**: [handler.go#L382](api/handler.go#L382)
+
+---
+
+### 2.13 获取分片统计
+
+**GET** `/api/v1/stats/shard`
+
+获取分片统计信息。
+
+**响应示例**:
+```json
+{
+    "shards": []
+}
+```
+
+> **注意**: 当前为占位实现，返回空数组。
+
+**代码位置**: [handler.go#L394](api/handler.go#L394)
 
 ---
 
@@ -227,16 +440,22 @@ X-User-ID: user123 (可选)
 
 **URL**: `ws://localhost:8080/ws`
 
+**连接示例**:
+```javascript
+const ws = new WebSocket('ws://localhost:8080/ws')
+```
+
+---
+
 ### 3.2 订阅/取消订阅
 
-**订阅消息**:
+**订阅消息**（兼容Binance格式）:
 ```json
 {
     "method": "SUBSCRIBE",
     "params": [
         "BTCUSDT@trade",
-        "BTCUSDT@depth@100ms",
-        "BTCUSDT@kline_1m"
+        "BTCUSDT@depth@100ms"
     ],
     "id": 1
 }
@@ -251,110 +470,282 @@ X-User-ID: user123 (可选)
 }
 ```
 
+**订阅确认响应**:
+```json
+{
+    "type": "subscribed",
+    "params": ["BTCUSDT@trade"],
+    "success": true,
+    "id": 1
+}
+```
+
+---
+
 ### 3.3 订阅主题
 
-| 主题 | 参数 | 说明 |
-|------|------|------|
-| `<symbol>@trade` | 交易对 | 实时成交 |
-| `<symbol>@depth@<interval>` | 交易对, 间隔 | 订单簿深度 (100ms, 1s) |
-| `<symbol>@kline_<interval>` | 交易对, 间隔 | K线数据 (1m, 5m, 1h, 1d) |
-| `<symbol>@ticker` | 交易对 | 行情Ticker |
+| 主题格式 | 说明 | 示例 |
+|---------|------|------|
+| `<symbol>@trade` | 实时成交 | BTCUSDT@trade |
+| `<symbol>@depth@<interval>` | 订单簿深度更新 | BTCUSDT@depth@100ms |
+| `<symbol>@kline_<interval>` | K线数据 | BTCUSDT@kline_1m |
 
-### 3.4 推送消息
+**代码位置**: [hub.go#L341](ws/hub.go#L341)
+
+---
+
+### 3.4 推送消息格式
+
+**推送消息通用结构**:
+```json
+{
+    "type": "trade",
+    "topic": "trade_BTCUSDT",
+    "symbol": "BTCUSDT",
+    "data": {},
+    "time": 1750828800000
+}
+```
 
 **成交消息 (trade)**:
 ```json
 {
-    "e": "trade",
-    "s": "BTCUSDT",
-    "p": "94250.50",
-    "q": "0.1234",
-    "m": true,
-    "T": 1750828800000
+    "type": "trade",
+    "topic": "trade_BTCUSDT",
+    "symbol": "BTCUSDT",
+    "data": {
+        "trade_id": "trd-abc123",
+        "order_id": "ord-xyz789",
+        "side": 0,
+        "price": 94250.50,
+        "quantity": 0.1234,
+        "timestamp": 1750828800000
+    },
+    "time": 1750828800000
 }
 ```
 
-**深度消息 (depth)**:
+**订单簿消息 (orderbook)**:
 ```json
 {
-    "e": "depth",
-    "s": "BTCUSDT",
-    "bids": [["94250.50", "1.2345"]],
-    "asks": [["94251.00", "0.9876"]],
-    "u": 1750828800001
-}
-```
-
-**K线消息 (kline)**:
-```json
-{
-    "e": "kline",
-    "s": "BTCUSDT",
-    "k": {
-        "t": 1750828800000,
-        "o": "94000.00",
-        "h": "94500.00",
-        "l": "93800.00",
-        "c": "94250.50",
-        "v": "12345.67"
-    }
+    "type": "orderbook",
+    "topic": "orderbook_BTCUSDT",
+    "symbol": "BTCUSDT",
+    "data": {
+        "symbol": "BTCUSDT",
+        "version": 1750828800001,
+        "timestamp": 1750828800000,
+        "bids": [[94250.50, 1.2345], [94249.00, 2.3456]],
+        "asks": [[94251.00, 0.9876], [94252.50, 1.5432]]
+    },
+    "time": 1750828800000
 }
 ```
 
 **Ticker消息**:
 ```json
 {
-    "e": "24hrTicker",
-    "s": "BTCUSDT",
-    "c": "94250.50",
-    "p": "1250.30",
-    "P": "1.34",
-    "h": "95500.00",
-    "l": "92800.00",
-    "v": "12345.67",
-    "q": "1167890123.45"
+    "type": "ticker",
+    "topic": "ticker_BTCUSDT",
+    "symbol": "BTCUSDT",
+    "data": {
+        "symbol": "BTCUSDT",
+        "last_price": 94250.50,
+        "bid_price": 94250.00,
+        "ask_price": 94251.00,
+        "volume_24h": 12345.67,
+        "timestamp": 1750828800000
+    },
+    "time": 1750828800000
 }
 ```
 
 ---
 
-## 4. 数据类型
+### 3.5 心跳机制
 
-### 4.1 订单方向
+**Ping请求**:
+```json
+{
+    "type": "ping"
+}
+```
 
-| 值 | 说明 |
-|----|------|
-| BUY | 买入 |
-| SELL | 卖出 |
+**Pong响应**:
+```json
+{
+    "type": "pong",
+    "time": 1750828800000
+}
+```
 
-### 4.2 订单类型
+**自动心跳**: 服务端每30秒发送Ping消息，客户端需在30秒内回复Pong，否则连接会被断开。
 
-| 值 | 说明 |
-|----|------|
-| LIMIT | 限价单 |
-| MARKET | 市价单 |
-
-### 4.3 订单状态
-
-| 值 | 说明 |
-|----|------|
-| PENDING | 等待中 |
-| OPEN | 已挂单 |
-| PARTIALLY_FILLED | 部分成交 |
-| FILLED | 完全成交 |
-| CANCELED | 已取消 |
-| REJECTED | 已拒绝 |
-
-### 4.4 精度说明
-
-- 价格精度: 8位小数
-- 数量精度: 8位小数
-- 金额精度: 8位小数
-- 时间戳: 毫秒 (Unix Epoch)
+**代码位置**: [hub.go#L298](ws/hub.go#L298)
 
 ---
 
-## 5. 限流规则
+## 4. 数据类型
+
+### 4.1 订单方向 (OrderSide)
+
+| 值 | 枚举 | 说明 |
+|----|------|------|
+| 0 | Buy | 买入 |
+| 1 | Sell | 卖出 |
+
+**代码位置**: [order.go#L10](engine/order.go#L10)
+
+---
+
+### 4.2 订单类型 (OrderType)
+
+| 值 | 枚举 | 说明 |
+|----|------|------|
+| 0 | LimitOrder | 限价单 |
+| 1 | MarketOrder | 市价单 |
+| 2 | StopLimitOrder | 止限价单 |
+
+**代码位置**: [order.go#L18](engine/order.go#L18)
+
+---
+
+### 4.3 订单状态 (OrderStatus)
+
+| 值 | 枚举 | 说明 |
+|----|------|------|
+| 0 | StatusNew | 新建 |
+| 1 | StatusPartiallyFilled | 部分成交 |
+| 2 | StatusFilled | 完全成交 |
+| 3 | StatusCanceled | 已取消 |
+| 4 | StatusRejected | 已拒绝 |
+
+**代码位置**: [order.go#L27](engine/order.go#L27)
+
+---
+
+### 4.4 订单结构 (Order)
+
+```go
+type Order struct {
+    OrderID        string        // 订单ID
+    Symbol         string        // 交易对
+    Side           OrderSide     // 买卖方向(0=Buy, 1=Sell)
+    Type           OrderType     // 订单类型(0=LIMIT, 1=MARKET)
+    Price          float64       // 价格
+    Quantity       float64       // 数量
+    FilledQuantity float64       // 已成交数量
+    AvgFillPrice   float64       // 平均成交价
+    Status         OrderStatus   // 状态
+    Timestamp      int64         // 时间戳(毫秒)
+    ClientOrderID  string        // 客户端订单ID
+    Priority       int64         // 优先级(纳秒时间戳)
+}
+```
+
+**代码位置**: [order.go#L38](engine/order.go#L38)
+
+---
+
+### 4.5 成交记录结构 (Trade)
+
+```go
+type Trade struct {
+    TradeID        string    // 成交ID
+    Symbol         string    // 交易对
+    OrderID        string    // 订单ID
+    CounterOrderID string    // 对手订单ID
+    Side           OrderSide // 方向
+    Price          float64   // 成交价
+    Quantity       float64   // 成交数量
+    Fee            float64   // 手续费
+    FeeCurrency    string    // 手续费货币
+    Timestamp      int64     // 时间戳(毫秒)
+}
+```
+
+**代码位置**: [order.go#L184](engine/order.go#L184)
+
+---
+
+### 4.6 Ticker数据结构 (TickerData)
+
+```go
+type TickerData struct {
+    Symbol         string  `json:"symbol"`
+    LastPrice      float64 `json:"last_price"`
+    BidPrice       float64 `json:"bid_price"`
+    AskPrice       float64 `json:"ask_price"`
+    BidQty         float64 `json:"bid_qty"`
+    AskQty         float64 `json:"ask_qty"`
+    Volume24H      float64 `json:"volume_24h"`
+    QuoteVolume24H float64 `json:"quote_volume_24h"`
+    High24H        float64 `json:"high_24h"`
+    Low24H         float64 `json:"low_24h"`
+    PriceChange    float64 `json:"price_change"`
+    PriceChangePct float64 `json:"price_change_pct"`
+    Timestamp      int64   `json:"timestamp"`
+}
+```
+
+**代码位置**: [hub.go#L477](ws/hub.go#L477)
+
+---
+
+### 4.7 订单簿数据结构 (OrderBookData)
+
+```go
+type OrderBookData struct {
+    Symbol    string        `json:"symbol"`
+    Version   int64         `json:"version"`
+    Timestamp int64         `json:"timestamp"`
+    Bids      []interface{} `json:"bids"` // [[price, quantity], ...]
+    Asks      []interface{} `json:"asks"` // [[price, quantity], ...]
+}
+```
+
+**代码位置**: [hub.go#L494](ws/hub.go#L494)
+
+---
+
+## 5. 错误响应
+
+### 5.1 错误响应格式
+
+```json
+{
+    "success": false,
+    "error": {
+        "code": "INVALID_REQUEST",
+        "message": "请求参数无效"
+    }
+}
+```
+
+### 5.2 HTTP错误码
+
+| HTTP状态码 | 说明 |
+|-----------|------|
+| 400 | 请求参数无效 |
+| 404 | 资源未找到 |
+| 405 | 方法不允许 |
+| 500 | 服务器内部错误 |
+
+### 5.3 常见错误场景
+
+| 错误场景 | HTTP状态码 | 响应内容 |
+|---------|-----------|---------|
+| 请求体解析失败 | 400 | `"Invalid request body"` |
+| 必填字段缺失 | 400 | `"Missing required fields"` |
+| 交易对不存在 | 404 | `"Symbol not found"` |
+| 请求方法错误 | 405 | `"Method not allowed"` |
+| 撮合引擎错误 | 500 | 具体错误信息 |
+
+**代码位置**: [handler.go#L402](api/handler.go#L402)
+
+---
+
+## 6. 限流规则
 
 | 接口 | 限制 |
 |------|------|
@@ -364,56 +755,195 @@ X-User-ID: user123 (可选)
 
 ---
 
-## 6. 示例代码
+## 7. 路由映射表
 
-### 6.1 Go 下单示例
+| HTTP方法 | 路径 | 处理函数 | 文件位置 |
+|---------|------|---------|---------|
+| GET | /health | Health | api/handler.go:129 |
+| GET | /ready | Ready | api/handler.go:134 |
+| GET | /ws | WebSocket | api/handler.go:140 |
+| POST | /api/v1/orders | CreateOrder | api/handler.go:174 |
+| GET | /api/v1/orders | GetOrders | api/handler.go:239 |
+| GET | /api/v1/orders/{orderId} | GetOrder | api/handler.go:221 |
+| DELETE | /api/v1/orders/{orderId} | CancelOrder | api/handler.go:230 |
+| GET | /api/v1/market/ticker/{symbol} | GetTicker | api/handler.go:256 |
+| GET | /api/v1/market/orderbook/{symbol} | GetOrderBook | api/handler.go:283 |
+| GET | /api/v1/market/trades/{symbol} | GetTrades | api/handler.go:319 |
+| GET | /api/v1/market/kline/{symbol} | GetKLine | api/handler.go:330 |
+| GET | /api/v1/market/depth/{symbol} | GetDepth | api/handler.go:355 |
+| GET | /api/v1/stats | GetStats | api/handler.go:382 |
+| GET | /api/v1/stats/shard | GetShardStats | api/handler.go:394 |
+
+**路由注册位置**: [handler.go#L48](api/handler.go#L48)
+
+---
+
+## 8. 示例代码
+
+### 8.1 Go 下单示例
 
 ```go
-client := &http.Client{}
-req, _ := http.NewRequest("POST", "http://localhost:8080/api/v1/order", strings.NewReader(`{
-    "symbol": "BTCUSDT",
-    "side": "BUY",
-    "type": "LIMIT",
-    "price": "94250.50",
-    "quantity": "0.1234"
-}`))
-req.Header.Set("Content-Type", "application/json")
+package main
 
-resp, _ := client.Do(req)
-defer resp.Body.Close()
-```
+import (
+    "bytes"
+    "encoding/json"
+    "fmt"
+    "net/http"
+)
 
-### 6.2 WebSocket 订阅示例 (Go)
-
-```go
-conn, _, _ := websocket.DefaultDialer.Dial("ws://localhost:8080/ws", nil)
-
-subscribeMsg := `{"method":"SUBSCRIBE","params":["BTCUSDT@trade"],"id":1}`
-conn.WriteMessage(websocket.TextMessage, []byte(subscribeMsg))
-
-for {
-    _, msg, _ := conn.ReadMessage()
-    fmt.Println(string(msg))
+func main() {
+    order := map[string]interface{}{
+        "symbol":   "BTCUSDT",
+        "side":     "BUY",
+        "type":     "LIMIT",
+        "price":    94250.50,
+        "quantity": 0.1234,
+    }
+    
+    jsonData, _ := json.Marshal(order)
+    resp, _ := http.Post("http://localhost:8080/api/v1/orders", 
+        "application/json", bytes.NewBuffer(jsonData))
+    defer resp.Body.Close()
+    
+    fmt.Println("Status:", resp.Status)
 }
 ```
 
-### 6.3 Python 订阅示例
+### 8.2 JavaScript WebSocket 订阅示例
 
-```python
-import websockets
-import asyncio
-import json
+```javascript
+const ws = new WebSocket('ws://localhost:8080/ws')
 
-async def main():
-    async with websockets.connect("ws://localhost:8080/ws") as ws:
-        await ws.send(json.dumps({
-            "method": "SUBSCRIBE",
-            "params": ["BTCUSDT@trade"],
-            "id": 1
-        }))
-        
-        async for message in ws:
-            print(message)
+ws.onopen = () => {
+    ws.send(JSON.stringify({
+        method: 'SUBSCRIBE',
+        params: ['BTCUSDT@trade', 'BTCUSDT@depth@100ms'],
+        id: 1
+    }))
+}
 
-asyncio.run(main())
+ws.onmessage = (event) => {
+    const data = JSON.parse(event.data)
+    console.log('Received:', data)
+}
+
+ws.onerror = (error) => {
+    console.error('WebSocket error:', error)
+}
 ```
+
+### 8.3 PowerShell 测试示例
+
+```powershell
+# 健康检查
+Invoke-RestMethod -Uri "http://localhost:8080/health"
+
+# 获取Ticker
+Invoke-RestMethod -Uri "http://localhost:8080/api/v1/market/ticker/BTCUSDT"
+
+# 创建订单
+$body = @{
+    symbol = "BTCUSDT"
+    side = "BUY"
+    type = "LIMIT"
+    price = 95000
+    quantity = 0.1
+} | ConvertTo-Json
+Invoke-RestMethod -Uri "http://localhost:8080/api/v1/orders" -Method Post -ContentType "application/json" -Body $body
+```
+
+---
+
+## 9. 待实现功能
+
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| 查询订单详情 | 占位 | 返回固定响应 |
+| 取消订单 | 占位 | 返回固定响应 |
+| 获取订单列表 | 占位 | 返回空数组 |
+| 获取成交历史 | 占位 | 返回空数组 |
+| 获取K线数据 | 占位 | 返回空数组 |
+| 获取分片统计 | 占位 | 返回空数组 |
+| WebSocket K线推送 | 未实现 | 需开发 |
+| 用户认证 | 未实现 | 需添加JWT |
+| 钱包余额 | 未实现 | 需开发 |
+| 订单撮合后回调 | 未实现 | 需开发 |
+
+---
+
+## 10. 技术栈
+
+| 组件 | 技术 | 版本 |
+|------|------|------|
+| 语言 | Go | 1.21+ |
+| HTTP框架 | 标准库 net/http | - |
+| WebSocket | gorilla/websocket | - |
+| 日志 | rs/zerolog | - |
+| UUID | google/uuid | - |
+| 数据结构 | 跳表(SkipList), 红黑树 | 自定义实现 |
+
+---
+
+## 11. 项目结构
+
+```
+e:\codex\smartx_backend\
+├── api/
+│   └── handler.go          # HTTP API处理器
+├── cmd/server/
+│   └── main.go             # 服务入口
+├── config/
+│   └── config.go           # 配置管理
+├── engine/
+│   ├── matching.go         # 撮合逻辑
+│   ├── order.go            # 订单结构
+│   ├── orderbook.go        # 订单簿
+│   ├── shard.go            # 分片路由
+│   └── skiplist.go         # 跳表实现
+├── mq/
+│   └── kafka.go            # Kafka消息队列
+├── proto/
+│   ├── market.go           # Protobuf定义
+│   └── serializer.go       # 序列化工具
+├── ws/
+│   └── hub.go              # WebSocket中心
+├── Dockerfile              # Docker配置
+├── docker-compose.yml      # Docker Compose
+├── API.md                  # API文档(本文件)
+├── DESIGN.md               # 设计文档
+├── config.toml             # 配置文件
+├── go.mod                  # Go模块依赖
+└── go.sum                  # Go依赖校验
+```
+
+---
+
+## 12. 部署信息
+
+### 12.1 本地开发
+
+```bash
+cd e:\codex\smartx_backend
+go run ./cmd/server
+```
+
+### 12.2 Docker部署
+
+```bash
+cd e:\codex\smartx_backend
+docker-compose up -d
+```
+
+### 12.3 服务端口
+
+| 端口 | 服务 | 说明 |
+|------|------|------|
+| 8080 | HTTP/WebSocket | API和WebSocket服务 |
+| 9090 | 监控指标 | Prometheus metrics |
+
+---
+
+**文档生成时间**: 2026-06-25
+**文档版本**: v1.0
+**代码位置**: `e:\codex\smartx_backend`

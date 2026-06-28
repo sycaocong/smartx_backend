@@ -16,31 +16,36 @@ import (
 	"github.com/smartx/matching-engine/api"
 	"github.com/smartx/matching-engine/config"
 	"github.com/smartx/matching-engine/engine"
+	"github.com/smartx/matching-engine/engine/futures"
+	"github.com/smartx/matching-engine/risk"
 	"github.com/smartx/matching-engine/ws"
 )
 
-// 支持的交易对列表
 var SYMBOLS = []string{
 	"BTCUSDT", "ETHUSDT", "BNBUSDT", "ADAUSDT", "DOGEUSDT",
 	"XRPUSDT", "DOTUSDT", "UNIUSDT", "LTCUSDT", "LINKUSDT",
 	"MATICUSDT", "SOLUSDT", "AVAXUSDT", "ATOMUSDT", "FILUSDT",
 }
 
+var FUTURES_SYMBOLS = []string{
+	"BTCUSDT_PERP", "ETHUSDT_PERP", "BNBUSDT_PERP",
+	"SOLUSDT_PERP", "AVAXUSDT_PERP", "XRPUSDT_PERP",
+}
+
+// main 服务入口函数
+// 初始化合约撮合引擎、风险管理模块、API处理器和WebSocket服务
+// [Design: 系统架构](../DESIGN_DERIVATIVES.md#21-整体架构图)
 func main() {
-	// 解析命令行参数
 	port := flag.Int("port", 8080, "HTTP server port")
 	shards := flag.Int("shards", 8, "Number of matching engine shards")
 	flag.Parse()
 
-	// 初始化日志
 	initLogger()
 
 	log.Info().Msg("SmartX Matching Engine starting...")
 
-	// 加载配置
 	cfg := config.Load()
 
-	// 覆盖配置
 	if *port > 0 {
 		cfg.Server.Port = *port
 	}
@@ -48,10 +53,8 @@ func main() {
 		cfg.Matching.Shards = *shards
 	}
 
-	// 创建分片路由
 	shardRouter := engine.NewShardAwareRouter(cfg.Matching.Shards, SYMBOLS, log.Logger)
 
-	// 创建WebSocket中心
 	wsConfig := &ws.WSConfig{
 		ReadBufferSize:  cfg.Server.WS.ReadBufferSize,
 		WriteBufferSize: cfg.Server.WS.WriteBufferSize,
@@ -62,22 +65,63 @@ func main() {
 	}
 	wsHub := ws.NewHub(wsConfig, log.Logger)
 
-	// 启动WebSocket Hub
 	go wsHub.Run()
 
-	// 创建行情广播器
 	for _, symbol := range SYMBOLS {
 		broadcaster := ws.NewMarketDataBroadcaster(wsHub, symbol, time.Second, log.Logger)
 		broadcaster.Start()
 	}
 
-	// 启动实时行情广播（从撮合引擎获取订单簿数据）
 	go startRealtimeBroadcast(shardRouter, wsHub)
 
-	// 创建API处理器
-	handler := api.NewHandler(shardRouter, wsHub, log.Logger)
+	// 初始化合约撮合引擎
+	futuresEngines := make(map[string]*futures.FuturesEngine)
+	for _, symbol := range FUTURES_SYMBOLS {
+		fe := futures.NewFuturesEngine(symbol, log.Logger)
+		futuresEngines[symbol] = fe
+	}
 
-	// 启动HTTP服务器
+	// 初始化保证金引擎
+	marginEngine := risk.NewMarginEngine()
+
+	// 初始化标记价格引擎
+	markPriceEngines := make(map[string]*risk.MarkPriceEngine)
+	for _, symbol := range FUTURES_SYMBOLS {
+		mpe := risk.NewMarkPriceEngine(symbol, log.Logger)
+		markPriceEngines[symbol] = mpe
+	}
+
+	// 初始化资金费率引擎
+	fundingRateEngines := make(map[string]*risk.FundingRateEngine)
+	for _, symbol := range FUTURES_SYMBOLS {
+		fre := risk.NewFundingRateEngine(symbol, markPriceEngines[symbol], marginEngine, log.Logger)
+		fre.CalculateFundingRate()
+		fundingRateEngines[symbol] = fre
+	}
+
+	// 初始化强平引擎
+	liquidationEngines := make(map[string]*risk.LiquidationEngine)
+	for _, symbol := range FUTURES_SYMBOLS {
+		le := risk.NewLiquidationEngine(marginEngine, log.Logger)
+		liquidationEngines[symbol] = le
+	}
+
+	// 初始化合约API处理器
+	futuresHandlers := make(map[string]*api.FuturesHandler)
+	for _, symbol := range FUTURES_SYMBOLS {
+		fh := api.NewFuturesHandler(
+			futuresEngines[symbol],
+			marginEngine,
+			liquidationEngines[symbol],
+			markPriceEngines[symbol],
+			fundingRateEngines[symbol],
+			log.Logger,
+		)
+		futuresHandlers[symbol] = fh
+	}
+
+	handler := api.NewHandler(shardRouter, wsHub, log.Logger, futuresHandlers)
+
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	server := &http.Server{
 		Addr:         addr,
@@ -87,7 +131,6 @@ func main() {
 		IdleTimeout:  120 * time.Second,
 	}
 
-	// 启动服务器
 	go func() {
 		log.Info().Str("addr", addr).Msg("HTTP server starting")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -95,27 +138,27 @@ func main() {
 		}
 	}()
 
-	// 启动性能监控
 	go startMetricsServer(9090)
 
-	// 等待中断信号
+	go startFuturesMarketSimulator(futuresEngines, markPriceEngines, marginEngine, liquidationEngines)
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
 	log.Info().Msg("Shutting down server...")
 
-	// 优雅关闭
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// 停止分片路由
 	shardRouter.Stop()
 
-	// 停止WebSocket Hub
+	for _, fe := range futuresEngines {
+		fe.Stop()
+	}
+
 	wsHub.Stop()
 
-	// 关闭HTTP服务器
 	if err := server.Shutdown(ctx); err != nil {
 		log.Error().Err(err).Msg("Server forced to shutdown")
 	}
@@ -123,11 +166,10 @@ func main() {
 	log.Info().Msg("Server exited")
 }
 
-// initLogger 初始化日志
+// initLogger 初始化日志配置
 func initLogger() {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
 
-	// 设置日志级别
 	level := os.Getenv("LOG_LEVEL")
 	if level == "" {
 		level = "info"
@@ -158,10 +200,8 @@ func startRealtimeBroadcast(router *engine.ShardAwareRouter, hub *ws.Hub) {
 				continue
 			}
 
-			// 获取订单簿深度
 			bids, asks := eng.GetDepth(20)
 
-			// 广播订单簿
 			if len(bids) > 0 || len(asks) > 0 {
 				hub.PublishOrderBook(symbol, map[string]interface{}{
 					"symbol": symbol,
@@ -171,56 +211,105 @@ func startRealtimeBroadcast(router *engine.ShardAwareRouter, hub *ws.Hub) {
 				})
 			}
 
-			// 获取成交记录
 			trades := eng.GetTrades()
 			for _, trade := range trades {
 				hub.PublishTrade(symbol, map[string]interface{}{
-					"e":      "trade",
-					"E":      time.Now().UnixMilli(),
-					"s":      symbol,
-					"t":      trade.TradeID,
-					"p":      trade.Price,
-					"q":      trade.Quantity,
-					"T":      trade.Timestamp,
-					"m":      trade.Side == engine.Sell,
+					"e": "trade",
+					"E": time.Now().UnixMilli(),
+					"s": symbol,
+					"t": trade.TradeID,
+					"p": trade.Price,
+					"q": trade.Quantity,
+					"T": trade.Timestamp,
+					"m": trade.Side == engine.Sell,
 				})
 			}
 
-			// 广播Ticker
 			bestBid, bestAsk, bidQty, askQty := eng.GetBestBidAsk()
 			hub.PublishTicker(symbol, map[string]interface{}{
-				"e":      "24hrTicker",
-				"E":      time.Now().UnixMilli(),
-				"s":      symbol,
-				"c":      bestAsk,
-				"b":      bestBid,
-				"a":      bestAsk,
-				"B":      bidQty,
-				"A":      askQty,
-				"v":      0,
-				"q":      0,
-				"h":      bestAsk,
-				"l":      bestBid,
-				"P":      0,
-				"p":      0,
-				"w":      0,
-				"x":      bestBid,
-				"C":      0,
-				"Q":      0,
-				"F":      0,
-				"L":      0,
-				"n":      0,
+				"e": "24hrTicker",
+				"E": time.Now().UnixMilli(),
+				"s": symbol,
+				"c": bestAsk,
+				"b": bestBid,
+				"a": bestAsk,
+				"B": bidQty,
+				"A": askQty,
+				"v": 0,
+				"q": 0,
+				"h": bestAsk,
+				"l": bestBid,
+				"P": 0,
+				"p": 0,
+				"w": 0,
+				"x": bestBid,
+				"C": 0,
+				"Q": 0,
+				"F": 0,
+				"L": 0,
+				"n": 0,
 			})
 		}
 	}
 }
 
-// startMetricsServer 启动性能监控服务器
+// startFuturesMarketSimulator 启动合约市场模拟器
+// 模拟价格波动，更新标记价格和强平价格
+func startFuturesMarketSimulator(futuresEngines map[string]*futures.FuturesEngine,
+	markPriceEngines map[string]*risk.MarkPriceEngine, marginEngine *risk.MarginEngine,
+	liquidationEngines map[string]*risk.LiquidationEngine) {
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	basePrices := map[string]float64{
+		"BTCUSDT_PERP": 94250.50,
+		"ETHUSDT_PERP": 4850.25,
+		"BNBUSDT_PERP": 610.75,
+		"SOLUSDT_PERP": 175.50,
+		"AVAXUSDT_PERP": 35.25,
+		"XRPUSDT_PERP": 0.6250,
+	}
+
+	priceOffsets := map[string]float64{}
+	for _, symbol := range FUTURES_SYMBOLS {
+		priceOffsets[symbol] = 0
+	}
+
+	for range ticker.C {
+		for _, symbol := range FUTURES_SYMBOLS {
+			basePrice := basePrices[symbol]
+			priceOffsets[symbol] += (float64(time.Now().UnixNano()%1000)-500) * 0.0001
+			currentPrice := basePrice * (1 + priceOffsets[symbol])
+
+			if mpe, ok := markPriceEngines[symbol]; ok {
+				mpe.SetExchangePrice("binance", currentPrice)
+				mpe.SetExchangePrice("okx", currentPrice*1.0001)
+				mpe.SetExchangePrice("coinbase", currentPrice*0.9999)
+				mpe.CalculateMarkPrice(0, 8*time.Hour)
+			}
+
+			if fe, ok := futuresEngines[symbol]; ok {
+				ob := fe.GetOrderBook()
+				if ob.LastPrice > 0 {
+					if mpe, ok := markPriceEngines[symbol]; ok {
+						mpe.UpdateLastTradePrice(ob.LastPrice)
+					}
+				}
+			}
+
+			if le, ok := liquidationEngines[symbol]; ok {
+				le.UpdateAllLiquidationPrices(symbol, currentPrice)
+			}
+		}
+	}
+}
+
+// startMetricsServer 启动指标监控服务器
 func startMetricsServer(port int) {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
-		// 简单的性能指标输出
 		w.Write([]byte(fmt.Sprintf(`
 # HELP matching_engine_uptime Engine uptime
 # TYPE matching_engine_uptime gauge
@@ -229,7 +318,11 @@ matching_engine_uptime %d
 # HELP matching_engine_symbols_total Total symbols
 # TYPE matching_engine_symbols_total gauge
 matching_engine_symbols_total %d
-`, time.Now().Unix(), len(SYMBOLS))))
+
+# HELP matching_engine_futures_symbols_total Total futures symbols
+# TYPE matching_engine_futures_symbols_total gauge
+matching_engine_futures_symbols_total %d
+`, time.Now().Unix(), len(SYMBOLS), len(FUTURES_SYMBOLS))))
 	})
 
 	addr := fmt.Sprintf(":%d", port)

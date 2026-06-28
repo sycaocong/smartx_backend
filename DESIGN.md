@@ -3,9 +3,11 @@
 ## 1. 项目概述
 
 ### 1.1 项目简介
+
 企业级高性能分布式交易所撮合引擎，采用 Go 语言开发，支持按交易对分片的分布式撮合架构。
 
 ### 1.2 核心特性
+
 - **分布式架构**：按交易对 FNV-1a 哈希分片，支持多撮合实例并行处理
 - **高性能数据结构**：跳表（Skip List）+ 红黑树，O(log n) 时间复杂度
 - **实时行情推送**：WebSocket（Gorilla Websocket），支持百万级并发
@@ -72,17 +74,18 @@
 
 ```go
 type Order struct {
-    OrderID     string        // 订单ID (UUID)
-    Symbol      string        // 交易对 (e.g., "BTCUSDT")
-    Side        OrderSide     // 订单方向: Buy/Sell
-    Type        OrderType     // 订单类型: Limit/Market
-    Price       decimal.Decimal // 订单价格
-    Quantity    decimal.Decimal // 订单数量
-    FilledQty   decimal.Decimal // 已成交数量
-    Status      OrderStatus   // 订单状态
-    CreateTime  int64         // 创建时间 (毫秒)
-    UpdateTime  int64         // 更新时间 (毫秒)
-    UserID      string        // 用户ID
+    OrderID        string        // 订单ID (UUID)
+    Symbol         string        // 交易对 (e.g., "BTCUSDT")
+    Side           OrderSide     // 订单方向: Buy/Sell
+    Type           OrderType     // 订单类型: Limit/Market/StopLimit
+    Price          float64       // 订单价格
+    Quantity       float64       // 订单数量
+    FilledQuantity float64       // 已成交数量
+    AvgFillPrice   float64       // 平均成交价格
+    Status         OrderStatus   // 订单状态
+    Timestamp      int64         // 创建时间戳
+    ClientOrderID  string        // 客户端订单ID
+    UserID         string        // 用户ID
 }
 ```
 
@@ -92,6 +95,8 @@ Pending → Open → PartiallyFilled → Filled
                       ↓
                    Canceled
 ```
+
+**实现代码**: [order.go](engine/order.go)
 
 ### 3.2 订单簿 (OrderBook)
 
@@ -119,6 +124,8 @@ Pending → Open → PartiallyFilled → Filled
 | Match Order | O(log n) | 最佳价格撮合 |
 | Get Depth | O(1) | 直接访问价格档位 |
 
+**实现代码**: [orderbook.go](engine/orderbook.go)
+
 ### 3.3 跳表 (Skip List)
 
 跳表层级结构：
@@ -135,6 +142,8 @@ Level 0: [HEADER] ─► [NODE] ─► [NODE] ─► [NODE] ► [NIL]
 - 概率因子: 0.5
 - 线程安全: sync.RWMutex
 
+**实现代码**: [skiplist.go](engine/skiplist.go)
+
 ### 3.4 分片管理器 (ShardManager)
 
 ```go
@@ -148,6 +157,24 @@ func (sm *ShardManager) GetShard(symbol string) *MatchingShard {
     return sm.shards[hash%sm.numShard]
 }
 ```
+
+**实现代码**: [shard.go](engine/shard.go)
+
+### 3.5 撮合引擎 (MatchingEngine)
+
+撮合引擎是系统的核心组件，负责订单匹配和成交处理。
+
+**核心方法**:
+
+| 方法 | 功能 | 代码位置 |
+|------|------|----------|
+| `SubmitOrder()` | 提交订单 | [matching.go#L83](engine/matching.go#L83) |
+| `CancelOrder()` | 取消订单 | [matching.go#L135](engine/matching.go#L135) |
+| `GetOrder()` | 查询订单 | [matching.go#L168](engine/matching.go#L168) |
+| `GetOrderBook()` | 获取订单簿 | [matching.go#L195](engine/matching.go#L195) |
+| `GetStats()` | 获取统计信息 | [matching.go#L220](engine/matching.go#L220) |
+
+**实现代码**: [matching.go](engine/matching.go)
 
 ---
 
@@ -175,48 +202,79 @@ func (sm *ShardManager) GetShard(symbol string) *MatchingShard {
 }
 ```
 
+**实现代码**: [hub.go](ws/hub.go)
+
 ### 4.2 HTTP API
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | /health | 健康检查 |
-| GET | /api/v1/market/ticker/{symbol} | 行情数据 |
-| GET | /api/v1/market/orderbook/{symbol} | 订单簿深度 |
-| POST | /api/v1/order | 下单 |
-| DELETE | /api/v1/order/{orderId} | 取消订单 |
-| GET | /api/v1/order/{orderId} | 查询订单 |
+| 方法 | 路径 | 说明 | 代码位置 |
+|------|------|------|----------|
+| GET | /health | 健康检查 | [handler.go#L240](api/handler.go#L240) |
+| GET | /ready | 就绪检查 | [handler.go#L244](api/handler.go#L244) |
+| GET | /api/v1/market/ticker/{symbol} | 行情数据 | [handler.go#L353](api/handler.go#L353) |
+| GET | /api/v1/market/orderbook/{symbol} | 订单簿深度 | [handler.go#L377](api/handler.go#L377) |
+| GET | /api/v1/market/depth/{symbol} | 深度数据 | [handler.go#L439](api/handler.go#L439) |
+| GET | /api/v1/market/trades/{symbol} | 成交记录 | [handler.go#L405](api/handler.go#L405) |
+| GET | /api/v1/market/kline/{symbol} | K 线数据 | [handler.go#L415](api/handler.go#L415) |
+| POST | /api/v1/orders | 创建订单 | [handler.go#L280](api/handler.go#L280) |
+| GET | /api/v1/orders/{orderId} | 查询订单 | [handler.go#L321](api/handler.go#L321) |
+| DELETE | /api/v1/orders/{orderId} | 取消订单 | [handler.go#L329](api/handler.go#L329) |
+| GET | /api/v1/orders | 获取订单列表 | [handler.go#L337](api/handler.go#L337) |
+| GET | /api/v1/stats | 系统统计 | [handler.go#L465](api/handler.go#L465) |
+| GET | /api/v1/stats/shard | 分片统计 | [handler.go#L476](api/handler.go#L476) |
+
+**实现代码**: [handler.go](api/handler.go)
 
 ---
 
-## 5. 性能指标
+## 5. 消息队列
 
-### 5.1 基准测试结果
+### 5.1 Kafka 集成
 
-| 指标 | 数值 |
-|------|------|
-| 订单撮合延迟 | < 100μs |
-| WebSocket 并发连接 | 100万+ |
-| 吞吐量 | 100万+ 订单/秒 |
-| 内存占用 | < 2GB (100万订单) |
+系统使用 Kafka 进行异步消息分发，支持订单和交易数据的实时推送。
 
-### 5.2 资源限制
+**核心方法**:
 
-```yaml
-deploy:
-  resources:
-    limits:
-      cpus: '4'
-      memory: 4G
-    reservations:
-      cpus: '2' 
-      memory: 2G
-```
+| 方法 | 功能 | 代码位置 |
+|------|------|----------|
+| `NewProducer()` | 创建生产者 | [kafka.go#L28](mq/kafka.go#L28) |
+| `NewConsumer()` | 创建消费者 | [kafka.go#L89](mq/kafka.go#L89) |
+| `PublishOrder()` | 发布订单消息 | [kafka.go#L156](mq/kafka.go#L156) |
+| `PublishTrade()` | 发布交易消息 | [kafka.go#L185](mq/kafka.go#L185) |
+
+**实现代码**: [kafka.go](mq/kafka.go)
 
 ---
 
-## 6. 配置说明
+## 6. 序列化
 
-### 6.1 config.toml
+### 6.1 Serializer 序列化器
+
+系统使用自定义序列化器，支持高效的数据编码和解码。
+
+**核心方法**:
+
+| 方法 | 功能 | 代码位置 |
+|------|------|----------|
+| `EncodeOrder()` | 编码订单 | [serializer.go#L35](proto/serializer.go#L35) |
+| `DecodeOrder()` | 解码订单 | [serializer.go#L68](proto/serializer.go#L68) |
+| `EncodeTrade()` | 编码交易 | [serializer.go#L105](proto/serializer.go#L105) |
+| `DecodeTrade()` | 解码交易 | [serializer.go#L138](proto/serializer.go#L138) |
+
+**实现代码**: [serializer.go](proto/serializer.go)
+
+### 6.2 市场数据结构
+
+定义了市场数据的标准格式。
+
+**实现代码**: [market.go](proto/market.go)
+
+---
+
+## 7. 配置管理
+
+### 7.1 Config 配置结构
+
+系统配置通过 `config.toml` 文件加载。
 
 ```toml
 [server]
@@ -239,11 +297,39 @@ db = 0
 level = "info"
 ```
 
+**实现代码**: [config.go](config/config.go)
+
 ---
 
-## 7. 部署指南
+## 8. 性能指标
 
-### 7.1 Docker Compose 部署
+### 8.1 基准测试结果
+
+| 指标 | 数值 |
+|------|------|
+| 订单撮合延迟 | < 100μs |
+| WebSocket 并发连接 | 100万+ |
+| 吞吐量 | 100万+ 订单/秒 |
+| 内存占用 | < 2GB (100万订单) |
+
+### 8.2 资源限制
+
+```yaml
+deploy:
+  resources:
+    limits:
+      cpus: '4'
+      memory: 4G
+    reservations:
+      cpus: '2' 
+      memory: 2G
+```
+
+---
+
+## 9. 部署指南
+
+### 9.1 Docker Compose 部署
 
 ```bash
 # 构建并启动所有服务
@@ -256,7 +342,7 @@ docker-compose logs -f matching-engine
 docker-compose down
 ```
 
-### 7.2 Kubernetes 部署
+### 9.2 Kubernetes 部署
 
 ```bash
 kubectl apply -f k8s/
@@ -264,32 +350,53 @@ kubectl apply -f k8s/
 
 ---
 
-## 8. 项目结构
+## 10. 项目结构
 
 ```
 e:\codex\smartx_backend\
 ├── cmd/
 │   └── server/
-│       └── main.go           # 应用入口
+│       └── main.go           # 应用入口 [main.go](cmd/server/main.go)
 ├── api/
-│   └── handler.go            # HTTP API 处理器
+│   └── handler.go            # HTTP API 处理器 [handler.go](api/handler.go)
 ├── config/
-│   └── config.go             # 配置管理
+│   └── config.go             # 配置管理 [config.go](config/config.go)
 ├── engine/
-│   ├── matching.go           # 撮合核心
-│   ├── order.go              # 订单结构
-│   ├── orderbook.go          # 订单簿
-│   ├── shard.go              # 分片管理
-│   └── skiplist.go           # 跳表实现
+│   ├── matching.go           # 撮合核心 [matching.go](engine/matching.go)
+│   ├── order.go              # 订单结构 [order.go](engine/order.go)
+│   ├── orderbook.go          # 订单簿 [orderbook.go](engine/orderbook.go)
+│   ├── shard.go              # 分片管理 [shard.go](engine/shard.go)
+│   └── skiplist.go           # 跳表实现 [skiplist.go](engine/skiplist.go)
 ├── mq/
-│   └── kafka.go              # Kafka 消息队列
+│   └── kafka.go              # Kafka 消息队列 [kafka.go](mq/kafka.go)
 ├── proto/
-│   ├── market.go             # 市场数据结构
-│   └── serializer.go         # 序列化器
+│   ├── market.go             # 市场数据结构 [market.go](proto/market.go)
+│   └── serializer.go         # 序列化器 [serializer.go](proto/serializer.go)
 ├── ws/
-│   └── hub.go                # WebSocket Hub
+│   └── hub.go                # WebSocket Hub [hub.go](ws/hub.go)
 ├── Dockerfile
 ├── docker-compose.yml
 ├── config.toml
 └── go.mod
 ```
+
+---
+
+## 11. 扩展模块
+
+### 11.1 衍生品交易系统
+
+系统已扩展支持衍生品交易，包括永续合约、交割合约等。
+
+**设计文档**: [DESIGN_DERIVATIVES.md](DESIGN_DERIVATIVES.md)
+
+**核心文件**:
+| 文件 | 功能 |
+|------|------|
+| [futures_engine.go](engine/futures/futures_engine.go) | 合约撮合引擎 |
+| [futures_order.go](engine/futures/futures_order.go) | 合约订单/持仓结构 |
+| [margin.go](risk/margin.go) | 保证金计算 |
+| [liquidation.go](risk/liquidation.go) | 强平逻辑 |
+| [mark_price.go](risk/mark_price.go) | 标记价格 |
+| [funding_rate.go](risk/funding_rate.go) | 资金费率 |
+| [futures_handler.go](api/futures_handler.go) | 合约 API 处理器 |

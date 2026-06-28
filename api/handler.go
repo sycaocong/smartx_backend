@@ -14,20 +14,25 @@ import (
 	"github.com/smartx/matching-engine/ws"
 )
 
-// Handler API处理器
 type Handler struct {
-	engine *engine.ShardAwareRouter
-	wsHub  *ws.Hub
-	logger zerolog.Logger
-	server *http.Server
+	engine          *engine.ShardAwareRouter
+	wsHub           *ws.Hub
+	logger          zerolog.Logger
+	server          *http.Server
+	futuresHandlers map[string]*FuturesHandler
 }
 
-// NewHandler 创建API处理器
-func NewHandler(engine *engine.ShardAwareRouter, wsHub *ws.Hub, logger zerolog.Logger) *Handler {
+func NewHandler(engine *engine.ShardAwareRouter, wsHub *ws.Hub, logger zerolog.Logger,
+	futuresHandlers ...map[string]*FuturesHandler) *Handler {
+
 	h := &Handler{
 		engine: engine,
 		wsHub:  wsHub,
 		logger: logger,
+	}
+
+	if len(futuresHandlers) > 0 {
+		h.futuresHandlers = futuresHandlers[0]
 	}
 
 	mux := http.NewServeMux()
@@ -40,49 +45,157 @@ func NewHandler(engine *engine.ShardAwareRouter, wsHub *ws.Hub, logger zerolog.L
 	return h
 }
 
-// Handler 返回HTTP处理器
 func (h *Handler) Handler() http.Handler {
 	return h.server.Handler
 }
 
-// setupRoutes 设置路由
 func (h *Handler) setupRoutes(mux *http.ServeMux) {
-	// 健康检查
 	mux.HandleFunc("/health", h.Health)
 	mux.HandleFunc("/ready", h.Ready)
 
-	// WebSocket
 	mux.HandleFunc("/ws", h.WebSocket)
 
-	// 订单接口
 	mux.HandleFunc("/api/v1/orders", h.handleOrders)
 	mux.HandleFunc("/api/v1/orders/", h.handleOrder)
 
-	// 市场数据接口
 	mux.HandleFunc("/api/v1/market/ticker/", h.GetTicker)
 	mux.HandleFunc("/api/v1/market/orderbook/", h.GetOrderBook)
 	mux.HandleFunc("/api/v1/market/trades/", h.GetTrades)
 	mux.HandleFunc("/api/v1/market/kline/", h.GetKLine)
 	mux.HandleFunc("/api/v1/market/depth/", h.GetDepth)
 
-	// 统计接口
 	mux.HandleFunc("/api/v1/stats", h.GetStats)
 	mux.HandleFunc("/api/v1/stats/shard", h.GetShardStats)
+
+	if h.futuresHandlers != nil {
+		h.setupFuturesRoutes(mux)
+	}
 }
 
-// Start 启动HTTP服务器
+func (h *Handler) setupFuturesRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/v1/futures/orders", h.handleFuturesOrders)
+	mux.HandleFunc("/api/v1/futures/orders/", h.handleFuturesOrder)
+	mux.HandleFunc("/api/v1/futures/positions", h.handleFuturesPositions)
+	mux.HandleFunc("/api/v1/futures/funding-rate", h.handleFuturesFundingRate)
+	mux.HandleFunc("/api/v1/futures/mark-price", h.handleFuturesMarkPrice)
+	mux.HandleFunc("/api/v1/futures/ticker", h.handleFuturesTicker)
+	mux.HandleFunc("/api/v1/futures/orderbook", h.handleFuturesOrderBook)
+}
+
+func (h *Handler) handleFuturesOrders(w http.ResponseWriter, r *http.Request) {
+	symbol := r.URL.Query().Get("symbol")
+	if symbol == "" {
+		symbol = "BTCUSDT_PERP"
+	}
+
+	if fh, ok := h.futuresHandlers[symbol]; ok {
+		fh.handleFuturesOrders(w, r)
+		return
+	}
+
+	http.Error(w, "Futures symbol not found", http.StatusNotFound)
+}
+
+func (h *Handler) handleFuturesOrder(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/futures/orders/")
+	if len(path) == 0 {
+		http.Error(w, "Order ID required", http.StatusBadRequest)
+		return
+	}
+
+	symbol := r.URL.Query().Get("symbol")
+	if symbol == "" {
+		symbol = "BTCUSDT_PERP"
+	}
+
+	if fh, ok := h.futuresHandlers[symbol]; ok {
+		fh.handleFuturesOrder(w, r)
+		return
+	}
+
+	http.Error(w, "Futures symbol not found", http.StatusNotFound)
+}
+
+func (h *Handler) handleFuturesPositions(w http.ResponseWriter, r *http.Request) {
+	symbol := r.URL.Query().Get("symbol")
+	if symbol == "" {
+		symbol = "BTCUSDT_PERP"
+	}
+
+	if fh, ok := h.futuresHandlers[symbol]; ok {
+		fh.handleFuturesPositions(w, r)
+		return
+	}
+
+	http.Error(w, "Futures symbol not found", http.StatusNotFound)
+}
+
+func (h *Handler) handleFuturesFundingRate(w http.ResponseWriter, r *http.Request) {
+	symbol := r.URL.Query().Get("symbol")
+	if symbol == "" {
+		symbol = "BTCUSDT_PERP"
+	}
+
+	if fh, ok := h.futuresHandlers[symbol]; ok {
+		fh.GetFundingRate(w, r)
+		return
+	}
+
+	http.Error(w, "Futures symbol not found", http.StatusNotFound)
+}
+
+func (h *Handler) handleFuturesMarkPrice(w http.ResponseWriter, r *http.Request) {
+	symbol := r.URL.Query().Get("symbol")
+	if symbol == "" {
+		symbol = "BTCUSDT_PERP"
+	}
+
+	if fh, ok := h.futuresHandlers[symbol]; ok {
+		fh.GetMarkPrice(w, r)
+		return
+	}
+
+	http.Error(w, "Futures symbol not found", http.StatusNotFound)
+}
+
+func (h *Handler) handleFuturesTicker(w http.ResponseWriter, r *http.Request) {
+	symbol := r.URL.Query().Get("symbol")
+	if symbol == "" {
+		symbol = "BTCUSDT_PERP"
+	}
+
+	if fh, ok := h.futuresHandlers[symbol]; ok {
+		fh.GetTicker(w, r)
+		return
+	}
+
+	http.Error(w, "Futures symbol not found", http.StatusNotFound)
+}
+
+func (h *Handler) handleFuturesOrderBook(w http.ResponseWriter, r *http.Request) {
+	symbol := r.URL.Query().Get("symbol")
+	if symbol == "" {
+		symbol = "BTCUSDT_PERP"
+	}
+
+	if fh, ok := h.futuresHandlers[symbol]; ok {
+		fh.GetOrderBook(w, r)
+		return
+	}
+
+	http.Error(w, "Futures symbol not found", http.StatusNotFound)
+}
+
 func (h *Handler) Start(addr string) error {
 	h.server.Addr = addr
 	h.logger.Info().Str("addr", addr).Msg("HTTP server starting")
 	return h.server.ListenAndServe()
 }
 
-// Stop 停止HTTP服务器
 func (h *Handler) Stop(ctx context.Context) error {
 	return h.server.Shutdown(ctx)
 }
 
-// CORS 中间件
 func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -98,7 +211,6 @@ func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// 日志中间件
 func logMiddleware(logger zerolog.Logger, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -115,7 +227,6 @@ func logMiddleware(logger zerolog.Logger, next http.HandlerFunc) http.HandlerFun
 	}
 }
 
-// responseWriter 响应写入器
 type responseWriter struct {
 	http.ResponseWriter
 	statusCode int
@@ -126,22 +237,18 @@ func (rw *responseWriter) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 }
 
-// Health 健康检查
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
 }
 
-// Ready 就绪检查
 func (h *Handler) Ready(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
 }
 
-// WebSocket WebSocket连接
 func (h *Handler) WebSocket(w http.ResponseWriter, r *http.Request) {
 	h.wsHub.HandleWebSocket(w, r)
 }
 
-// handleOrders 处理订单相关请求
 func (h *Handler) handleOrders(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "POST":
@@ -153,7 +260,6 @@ func (h *Handler) handleOrders(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleOrder 处理单个订单请求
 func (h *Handler) handleOrder(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/orders/")
 	if len(path) == 0 {
@@ -171,7 +277,6 @@ func (h *Handler) handleOrder(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// CreateOrder 创建订单
 func (h *Handler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Symbol        string  `json:"symbol"`
@@ -187,13 +292,11 @@ func (h *Handler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 验证请求
 	if req.Symbol == "" || req.Side == "" || req.Type == "" || req.Quantity <= 0 {
 		http.Error(w, "Missing required fields", http.StatusBadRequest)
 		return
 	}
 
-	// 转换为引擎格式
 	side := engine.Buy
 	if req.Side == "SELL" {
 		side = engine.Sell
@@ -204,21 +307,17 @@ func (h *Handler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		orderType = engine.MarketOrder
 	}
 
-	// 创建订单
 	order := engine.NewOrder(req.Symbol, side, orderType, req.Price, req.Quantity, req.ClientOrderID)
 
-	// 提交到撮合引擎
 	if err := h.engine.RouteOrder(order); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// 返回订单信息
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(order.ToProto())
 }
 
-// GetOrder 获取订单
 func (h *Handler) GetOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -227,7 +326,6 @@ func (h *Handler) GetOrder(w http.ResponseWriter, r *http.Request, orderID strin
 	})
 }
 
-// CancelOrder 取消订单
 func (h *Handler) CancelOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -236,7 +334,6 @@ func (h *Handler) CancelOrder(w http.ResponseWriter, r *http.Request, orderID st
 	})
 }
 
-// GetOrders 获取订单列表
 func (h *Handler) GetOrders(w http.ResponseWriter, r *http.Request) {
 	symbol := r.URL.Query().Get("symbol")
 	limit := r.URL.Query().Get("limit")
@@ -253,7 +350,6 @@ func (h *Handler) GetOrders(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetTicker 获取Ticker
 func (h *Handler) GetTicker(w http.ResponseWriter, r *http.Request) {
 	symbol := strings.TrimPrefix(r.URL.Path, "/api/v1/market/ticker/")
 
@@ -266,21 +362,18 @@ func (h *Handler) GetTicker(w http.ResponseWriter, r *http.Request) {
 	stats := eng.GetStats()
 	bids, asks, bidQty, askQty := eng.GetOrderBook().GetBestBidAsk()
 
-	ticker := &ws.TickerData{
-		Symbol:    symbol,
-		LastPrice: stats.LastPrice,
-		BidPrice:  bids,
-		AskPrice:  asks,
-		BidQty:    bidQty,
-		AskQty:    askQty,
-		Timestamp: time.Now().UnixMilli(),
-	}
-
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(ticker)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"symbol":    symbol,
+		"last_price": stats.LastPrice,
+		"bid_price":  bids,
+		"ask_price":  asks,
+		"bid_qty":    bidQty,
+		"ask_qty":    askQty,
+		"timestamp":  time.Now().UnixMilli(),
+	})
 }
 
-// GetOrderBook 获取订单簿
 func (h *Handler) GetOrderBook(w http.ResponseWriter, r *http.Request) {
 	symbol := strings.TrimPrefix(r.URL.Path, "/api/v1/market/orderbook/")
 
@@ -299,24 +392,16 @@ func (h *Handler) GetOrderBook(w http.ResponseWriter, r *http.Request) {
 
 	bids, asks := eng.GetDepth(limit)
 
-	ob := &ws.OrderBookData{
-		Symbol:    symbol,
-		Version:   time.Now().UnixNano(),
-		Timestamp: time.Now().UnixMilli(),
-	}
-
-	for _, bid := range bids {
-		ob.Bids = append(ob.Bids, []interface{}{bid.Price, bid.Quantity})
-	}
-	for _, ask := range asks {
-		ob.Asks = append(ob.Asks, []interface{}{ask.Price, ask.Quantity})
-	}
-
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(ob)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"symbol":    symbol,
+		"version":   time.Now().UnixNano(),
+		"timestamp": time.Now().UnixMilli(),
+		"bids":      bids,
+		"asks":      asks,
+	})
 }
 
-// GetTrades 获取成交历史
 func (h *Handler) GetTrades(w http.ResponseWriter, r *http.Request) {
 	symbol := strings.TrimPrefix(r.URL.Path, "/api/v1/market/trades/")
 
@@ -327,7 +412,6 @@ func (h *Handler) GetTrades(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetKLine 获取K线
 func (h *Handler) GetKLine(w http.ResponseWriter, r *http.Request) {
 	symbol := strings.TrimPrefix(r.URL.Path, "/api/v1/market/kline/")
 
@@ -352,7 +436,6 @@ func (h *Handler) GetKLine(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetDepth 获取深度
 func (h *Handler) GetDepth(w http.ResponseWriter, r *http.Request) {
 	symbol := strings.TrimPrefix(r.URL.Path, "/api/v1/market/depth/")
 
@@ -379,7 +462,6 @@ func (h *Handler) GetDepth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetStats 获取统计信息
 func (h *Handler) GetStats(w http.ResponseWriter, r *http.Request) {
 	wsStats := h.wsHub.GetStats()
 
@@ -391,7 +473,6 @@ func (h *Handler) GetStats(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetShardStats 获取分片统计
 func (h *Handler) GetShardStats(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -399,7 +480,6 @@ func (h *Handler) GetShardStats(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Error 错误处理
 func (h *Handler) Error(w http.ResponseWriter, status int, code, message string) {
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(map[string]interface{}{
